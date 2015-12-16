@@ -1,0 +1,3 @@
+Release Version 1.0 
+-------------------------------------
+Estimates seven transportation measures: Queues at Known Locations, Queues at Unknown Locations, Cycle Failure, Shockwaves, Travel Time, Delay and Space Mean Speed. Programs are used for both collecting Ground Truth data from vehicle trajectories and for estimating the measures using connected vehicle messages. Can be used for any type of message provided it has basic key elements.
