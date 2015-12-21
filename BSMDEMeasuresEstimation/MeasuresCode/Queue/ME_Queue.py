@@ -1,0 +1,259 @@
+#standard
+import argparse
+import datetime
+import os
+
+os.environ['TMPDIR'] = '/var/tmp'
+
+activate_this = '/gluster/gluster1/bsm_data_emulator/bsmde_python/bin/activate_this.py'
+execfile(activate_this, dict(__file__=activate_this))
+
+#local
+from MEFileReader import Messages
+from TCACore import Timer, Chk_Range#, logger
+
+BSM_100percent = False
+QUEUE_START_SPEED = 0.0
+QUEUE_FOLLOWING_SPEED = 10.0 #ft/s 
+QUEUE_DISTANCE_FROM_STOPBAR = 100 #ft
+QUEUE_FOLLOWING_DISTANCE = 100 # ft
+QUEUE_SPEED = 5.0 #ft/s
+AVG_VEHICLE_LENGTH = 20
+START_HOUR = 17
+CONVERT_METERS_TO_FT = 100 / 2.54 / 12 
+SECONDS_INTERVAL = 120
+t = Timer(enabled=False)
+
+def run_ME_queue(msgs, superlinks, link_dict, all_queue_filename, max_queue_output_name):
+
+    queue_output = []
+    max_output = []
+    active_vehicles = {}
+    max_queues = {}
+    start_time = datetime.datetime(100,1,1,int(START_HOUR),0,0)
+
+    for bottleneck_name in superlinks:
+        max_queues[bottleneck_name] = {}
+        for lane_group in superlinks[bottleneck_name]:
+            max_queues[bottleneck_name][lane_group] = {'link' : 0, 'lane' : 0, 'queue_count' : 0, 'max_queue_length' : 0.0, 'current_msgs': [] }
+
+    with open(all_queue_filename, 'wb') as out_f:
+        out_f.write('time,bottleneck_name,lane_group,queue_count,queue_length\n')
+
+        # ME Queue Step #2: For each time period
+        for tp, msg_list in msgs.read():
+            # logger.debug("Processing time period %s where number of messages is: %d" % (tp, len(msg_list)))
+            i_e = None
+            f_q = 0
+            last_SS_list = []
+
+            # Identify all messages on identified bottleneck links, assign each message to their bottleneck and lane_group
+            for msg in msg_list:
+                if int(msg['link']) in link_dict.keys():
+                    bottleneck_name = link_dict[msg['link']]['bottleneck_name']
+                    lane_group = link_dict[msg['link']]['lane_group']
+                    max_queues[bottleneck_name][lane_group]['current_msgs'].append(msg)
+
+
+            # ME Queue Step #3 and #4: For each bottleneck location and each lane_group
+            for bottleneck in superlinks:
+                for lane_group in superlinks[bottleneck]:
+                    # logger.debug("Processing bottleneck: %s and lane_group: %s" % (bottleneck, lane_group))
+
+                    b_x = superlinks[bottleneck][lane_group]['stopbar_x']
+                    b_y = superlinks[bottleneck][lane_group]['stopbar_y']
+                    l_x = superlinks[bottleneck][lane_group]['link_x']
+                    l_y = superlinks[bottleneck][lane_group]['link_y']
+
+                    # ME Queue Step #5: Retrieve all messages found on the links in the superlink, determine position xi and speed vi
+                    msg_list = max_queues[bottleneck][lane_group]['current_msgs']
+                    # logger.debug("Number of messages is: %d" % len(msg_list))
+
+                    if len(msg_list) > 0:
+                        max_queues[bottleneck][lane_group]['current_msgs'] = []
+                        # msg_list['distance'] = ((b_x - msg_list['x'])**2 + (b_y - msg_list['y'])**2)**.5 
+
+                        for msg in msg_list:
+                            # Set the distance of the message from the stopbar
+                            msg['linkdistance'] = distance_between(l_x, l_y, msg['x'], msg['y'])
+                            msg['distance'] = distance_between(b_x, b_y, msg['x'], msg['y'])
+
+                        # ME Queue Step #6: Sort all BSMs by increasing distance from the bottleneck stopline
+                        sorted_msg_list = sorted(msg_list, key=lambda k: k['linkdistance'])
+
+                        # ME Queue Step #7: For each BSM, determine if the vehicle is in a queued state
+                        if BSM_100percent:
+                            q_count = 0
+                            for msg in sorted_msg_list:
+                                if i_e is None:
+                                    if msg['v'] == QUEUE_START_SPEED and msg['distance'] <= QUEUE_DISTANCE_FROM_STOPBAR:
+                                        q_count += 1  
+                                        i_e = msg
+                                        f_q = 1  
+                                        # logger.debug("Queue started")                          
+                                else:
+                                    if (msg['v'] <= QUEUE_FOLLOWING_SPEED) and ((msg['linkdistance'] - (i_e['linkdistance'] + AVG_VEHICLE_LENGTH)) <= QUEUE_FOLLOWING_DISTANCE): # NEW - Change from 100 to 50 feet, then 20 feet
+                                        q_count += 1
+                                        i_e = msg
+                                        f_q = 1
+                                        # logger.debug("Added to queue")
+                                    else:
+                                        # logger.debug("Queue ended")
+                                        break
+                            if f_q > 0:
+                                q_length = f_q * (float(i_e['distance']) + AVG_VEHICLE_LENGTH)
+                                link = i_e['link']
+                                # logger.debug("Max queue length found of: %s" % q_length)
+                            else:
+                                q_count = 0
+                                q_length = 0
+                                link = 'NA'
+                        else:
+                            for msg in sorted_msg_list:
+                                # logger.debug("Message distance from stopbar is: %s and speed is: %s ft/sec" % (msg['distance'],msg['v']))
+                                if i_e is None:
+                                    if msg['v'] <= QUEUE_SPEED and msg['distance'] <= QUEUE_DISTANCE_FROM_STOPBAR:  
+                                        i_e = msg
+                                        f_q = 1  
+                                        # logger.debug("Queue started")                          
+                                else:
+                                    if (msg['v'] <= QUEUE_SPEED) and ((msg['linkdistance'] - (i_e['linkdistance'] + AVG_VEHICLE_LENGTH)) <= QUEUE_FOLLOWING_DISTANCE): 
+                                        i_e = msg
+                                        f_q = 1
+                                        # logger.debug("Added to queue")
+
+                            if f_q > 0:
+                                q_length = f_q * (float(i_e['distance']) + AVG_VEHICLE_LENGTH)
+                                q_count = q_length / AVG_VEHICLE_LENGTH
+                                link = i_e['link']
+                                # logger.debug("Max queue length found of: %s" % q_length)
+                            else:
+                                q_count = 0
+                                q_length = 0
+                                link = 'NA'
+
+                        last_SS_list.append(i_e) # Add the last msg in queue to the end
+                        f_q = 0 
+                        i_e = None
+
+                        max_queues = set_max_queue(q_count, q_length, bottleneck, link, lane_group, max_queues)
+                        out_f.write('%s,%s,%s,%d,%s\n' %(str(tp), bottleneck, lane_group, q_count, str(q_length)))
+
+            if tp % SECONDS_INTERVAL == 0:
+                # logger.debug("Time interval reached at: %s" % tp)
+                for bottleneck in superlinks:
+                    for lane_group in superlinks[bottleneck]:
+                        q_len = str(max_queues[bottleneck][lane_group]['max_queue_length'])
+                        q_count = str(int(max_queues[bottleneck][lane_group]['queue_count']))
+                        link = str(max_queues[bottleneck][lane_group]['link'])
+                        current_datetime = start_time + datetime.timedelta(seconds = int(tp))
+                        current_time = current_datetime.time()
+                        # logger.debug("Bottleneck: %s and lane_group: %s has max_queue length of %s feet and %s vehicles" % (bottleneck,lane_group,q_len, q_count))
+
+                        max_output.append([str(current_time), bottleneck, lane_group, link, q_len, q_count])
+                        max_queues[bottleneck][lane_group] = {'link' : 0, 'lane': 0, 'queue_count' : 0, 'max_queue_length' : 0.0, 'current_msgs' : [] }
+
+            if tp >= 5400.0:
+                break
+    
+    write_output(max_queue_output_name,max_output)
+
+
+def set_max_queue(q_count, q_length, bottleneck, link, lane_group, max_queues):
+    if float(max_queues[bottleneck][lane_group]['max_queue_length']) < float(q_length):
+        max_queues[bottleneck][lane_group]['max_queue_length'] = q_length
+        max_queues[bottleneck][lane_group]['queue_count'] = q_count
+        max_queues[bottleneck][lane_group]['link'] = link
+        max_queues[bottleneck][lane_group]['lane'] = lane_group
+
+    return max_queues
+
+def distance_between(origin_x, origin_y, destination_x, destination_y):
+    return ((origin_x - destination_x)**2 + (origin_y - destination_y)**2)**.5
+
+def write_output(filename, output):
+  if len(output) > 0:
+    with open(filename, 'w') as f_out:
+      print 'Writing to file'
+      f_out.write('Time,Bottleneck,Lane_group,Link,Max_Queue_Length,Max_Queue_Count\n')
+      for line in output:
+           f_out.write(','.join(line) + '\n')
+  else:
+    print 'No output'
+
+
+def read_superlink_file(filename):
+
+    superlinks = {}
+
+    for line in open (filename):
+        row = line.strip().split(',')
+
+        if row[0] not in superlinks.keys():
+            superlinks[row[0]] = {} # Key is superlink/bottleneck name
+        if row[1] not in superlinks[row[0]].keys():
+            superlinks[row[0]][row[1]] = {}
+            superlinks[row[0]][row[1]]['link_list'] = []
+
+        superlinks[row[0]][row[1]]['stopbar_x'] = float(row[2]) * CONVERT_METERS_TO_FT
+        superlinks[row[0]][row[1]]['stopbar_y'] = float(row[3]) * CONVERT_METERS_TO_FT
+        superlinks[row[0]][row[1]]['link_x'] = float(row[4]) * CONVERT_METERS_TO_FT
+        superlinks[row[0]][row[1]]['link_y'] = float(row[5]) * CONVERT_METERS_TO_FT
+
+        for col in range(6,len(row),3):
+            if row[col] == '':
+                break
+            superlinks[row[0]][row[1]]['link_list'].append( (int(row[col]), int(row[col+1]), float(row[col+2]))  ) # list in the order: link, lane, length
+
+    link_dict = all_links(superlinks)
+
+    return superlinks, link_dict
+
+def all_links(superlinks):
+    link_dict = {}
+    for superlink in superlinks:
+        for lane_group in superlinks[superlink]:
+            for link_position, link_data in enumerate(superlinks[superlink][lane_group]['link_list']):
+                link_num = link_data[0]
+                lane_num = link_data[1]
+                link_length = link_data[2]
+                if link_num not in link_dict.keys():
+                    link_dict[link_num] = {}
+                link_dict[link_num]['bottleneck_name'] = superlink
+                link_dict[link_num]['lane_group'] = lane_group
+
+    return link_dict
+
+
+t.start('main')
+
+parser = argparse.ArgumentParser(description='Measures Estimation program for reading in BSM and/or PDM files and producing Queue values')
+parser.add_argument('filename', help = 'Vehicle messages (PDM or BSM') 
+parser.add_argument('bottleneck_filename', help = 'CSV file of bottlenecks')  
+parser.add_argument('--out', help = 'Output csv file (include .csv)')
+args = parser.parse_args()
+
+dir_path = os.path.dirname( os.path.realpath( __file__ ) )
+
+superlinks, link_dict = read_superlink_file(args.bottleneck_filename)
+
+# NOTE: set interpolate to False when running with BSMs or if you don't want to generate interpolated PDMs
+msgs = Messages(args.filename, link_dict, interpolate = False)
+
+if args.out:
+    all_out_file = dir_path + '/' + 'all_' + args.out
+else:
+    all_out_file = dir_path + '/all_queue_me.csv'
+
+max_out_file = dir_path + '/' + args.out
+
+run_ME_queue(msgs, superlinks, link_dict, all_out_file, max_out_file)
+
+t.stop('main')
+
+if t.enabled:
+    print t['main']
+    with open('timeit.csv', 'wb') as time_f:
+        time_f.write(t.header())
+        time_f.write(t.write())
+        time_f.write('\n\n')
