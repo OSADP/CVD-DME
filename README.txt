@@ -13,7 +13,7 @@ the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS
 KIND, either express or implied. See the License for the specific language governing
 permissions and limitations under the License.
 
-System Requirements
+Configuration
 -------------------------
 The BSMDE Measures Estimation software can run on most standard Window or Linux based computers with 
 Pentium core processers, with at least two gigabits of RAM and at least 100 MB of drive space.
@@ -36,9 +36,18 @@ The BSMDE Measures Estimation software is packaged with Word based User Guides
 "The Measures Estimation software User manual.docx" and "The Ground Truth software User manual.docx" that contain all information about background
 purpose, benefits, objectives, inputs/outputs, how to run the software and requirements for the software.
 
-Web sites
----------
-The BSMDE Measures Estimation software is distributed through the USDOT's JPO
-Open Source Application Development Portal (OSADP)
+Code.gov Info
+----------------
+Agency: DOT
 
-http://itsforge.net/ 
+Short Description: This software package contains code to estimate key transportation measures using connected vehicle messages as well as to establish ground truth data using vehicle trajectories. The software estimates seven transportation measures: Queues at Known Locations, Queues at Unknown Locations, Cycle Failure, Shockwaves, Travel Time, Delay and Space Mean Speed. 
+
+Status: Beta
+
+Tags: transporation, connected vehicles, data emulator, BSM
+
+Labor Hours: 0
+
+Contact Name: James O'Hara
+
+Contact Phone: 703-610-1632
